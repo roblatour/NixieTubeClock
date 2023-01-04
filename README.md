@@ -1,5 +1,5 @@
 # NixieTubeClock
-Nixie tube clock (for an Esp32 driving a TFT display)
+Nixie tube clock (for an ESP32 driving a TFT display)
 Rob Latour, 2023
 
 ## Features
