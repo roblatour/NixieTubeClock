@@ -1,2 +1,22 @@
 # NixieTubeClock
-Nixie tube clock (for an esp32 driving a TFT display)
+Nixie tube clock (for an Esp32 driving a TFT display)
+Rob Latour, 2023
+
+## Features
+
+- Shows a Nixie Tube clock
+- Many settings, include those for Date and Time formats are customizable and stored in non-volitile memory
+- Date and Time are set and refreshed automatically via NTP server pools
+- ESP32 is only connected to the network when being setup and for NTP time updates
+- Network SSID and Password are not hardcoded in the sketch, rather program allows you to enter these via you computer or phone's default browser
+- uses open source NixieTube library ( https://github.com/roblatour/NixieTubes ) 
+
+## License
+
+MIT
+
+## Support
+
+Want to contribute? Great!
+
+Please visit https://rlatour.com 
