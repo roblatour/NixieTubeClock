@@ -5,7 +5,7 @@ Rob Latour, 2023
 ## Features
 
 - Shows a Nixie Tube clock
-- Many settings, include those for Date and Time formats are easily customizable and stored in non-volitile memory
+- Many settings, include those for Date and Time formats are easily customizable and stored in non-volatile memory
 - Date and Time are set and refreshed automatically via NTP server pools
 - ESP32 is only connected to the network when being setup and for NTP time updates
 - Network SSID and Password are not hardcoded in the sketch, rather program allows you to enter these via you computer or phone's default browser
