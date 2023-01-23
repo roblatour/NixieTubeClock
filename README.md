@@ -4,7 +4,7 @@ Rob Latour, 2023
 
 ## Features
 
-- Shows a Nixie Tube clock
+- Displays a Nixie Tube clock
 - Many settings, include those for Date and Time formats are easily customizable and stored in non-volatile memory
 - Date and Time are set and refreshed automatically via NTP server pools
 - ESP32 is only connected to the network when being setup and for NTP time updates
