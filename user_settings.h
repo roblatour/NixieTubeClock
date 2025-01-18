@@ -51,7 +51,7 @@
 
 #define SERIAL_MONITOR_SPEED                  115200                        // serial monitor speed
 
-#define DEBUG_IS_ON                           false                          // show debug info to Serial monitor windows
+#define DEBUG_IS_ON                           true                          // show debug info to Serial monitor windows
 
 #define ALLOW_ACCESS_TO_NETWORK               true                          // used for testing, set to false to disallow access to your Wifi network
 

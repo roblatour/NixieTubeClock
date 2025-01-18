@@ -1,8 +1,8 @@
 // Nixie clock (for TFT Display)
 //
-// Copyright Rob Latour, 2023
+// Copyright Rob Latour, 2025
 // License: MIT
-// htts://raltour.com
+// https://github.com/roblatour/NixieTubeClock
 // https://github.com/roblatour/NixieTubeClock
 //
 // Compile and upload using Arduino IDE (2.0.3 or greater)
@@ -29,20 +29,22 @@
 // Programmer                      ESPTool
 
 #include <Arduino.h>
-#include <TFT_eSPI.h>           // If using a LilyGo TDisplay S3 please use the TFT_eSPI library found here: https://github.com/Xinyuan-LilyGO/T-Display-S3/tree/main/lib
-#include "pin_config.h"         // found at https://github.com/Xinyuan-LilyGO/T-Display-S3/tree/main/example/factory
-#include <ESPAsyncWebServer.h>  // https://github.com/esphome/ESPAsyncWebServer (put all files in src directory into the ESPAsyncWebServer directory)
-#include <WebSocketsClient.h>   // Websockets by Markus Sattler version 2.3.6 https://github.com/Links2004/arduinoWebSockets
-#include <ArduinoSort.h>        // Arduino Sort by Emil Vikström version https://github.com/emilv/ArduinoSort
-#include <ESP32Time.h>
-#include <TimeLib.h>            // Time by Michael Margolis version 1.6.1
-#include <NixieTubes.h>         // https://github.com/roblatour/NixieTubes
+#include <TFT_eSPI.h>          // If using a LilyGo TDisplay S3 please use the TFT_eSPI library found here: https://github.com/Xinyuan-LilyGO/T-Display-S3/tree/main/lib
+#include <ESPAsyncWebServer.h> // https://github.com/esphome/ESPAsyncWebServer (put all files in src directory into the ESPAsyncWebServer directory)
+#include <WebSocketsClient.h>  // Websockets by Markus Sattler version 2.3.6 https://github.com/Links2004/arduinoWebSockets
+#include <ArduinoSort.h>       // Arduino Sort by Emil Vikström version https://github.com/emilv/ArduinoSort
+#include <ESP32Time.h>         //
+#include <TimeLib.h>           // Time by Michael Margolis version 1.6.1
 #include <WiFi.h>
 #include <time.h>
 #include <EEPROM.h>
+#include <esp_sntp.h>
+#include <atomic>
 
+#include "pin_config.h"        // found at https://github.com/Xinyuan-LilyGO/T-Display-S3/tree/main/example/factory
 #include "user_settings.h"
-#include "NixieTubes.h"
+#include "NixieTubes.h"        // https://github.com/roblatour/NixieTubes
+
 
 #include "Images/Rob.h"
 
@@ -54,7 +56,7 @@ int serialMonitorSpeed = SERIAL_MONITOR_SPEED;
 
 const bool debugIsOn = DEBUG_IS_ON;
 
-//Nixie Tubes
+// Nixie Tubes
 NixieTubes MyNixieTubes;
 
 // Wi-Fi stuff
@@ -64,7 +66,7 @@ String wifiSSID = "";
 String wifiPassword = "";
 
 // Wi-Fi Access Point
-const char* AccessPointSSID = "NixieTubeSetup";
+const char *AccessPointSSID = "NixieTubeSetup";
 IPAddress accessPointIPaddr(123, 123, 123, 123);
 IPAddress accessPointIPMask(255, 255, 255, 0);
 AsyncWebServer accessPointServer(80);
@@ -76,52 +78,54 @@ const bool allowAccessToTimeServer = ALLOW_ACCESS_TO_THE_TIME_SERVER;
 
 unsigned long nextTimeCheck;
 
-const char* primaryNTPServer = PRIMARY_TIME_SERVER;
-const char* secondaryNTPServer = SECONDARY_TIME_SERVER;
-const char* tertiaryNTPSever = TERTIARY_TIME_SERVER;
-const char* timeZone = MY_TIME_ZONE;
+const char *primaryNTPServer = PRIMARY_TIME_SERVER;
+const char *secondaryNTPServer = SECONDARY_TIME_SERVER;
+const char *tertiaryNTPServer = TERTIARY_TIME_SERVER;
+const char *timeZone = MY_TIME_ZONE;
 
-// Settings stuff (these are set in the users_settings.h file)
+std::atomic<bool> networkTimeSyncComplete(false);
+
+// Settings stuff
 const int TimeAndDate = 0;
 const int TimeOnly = 1;
 const int DateOnly = 2;
-static int displayTimeAndDate = DISPLAY_TIME_AND_DATE;                            // 0: Display the time and date
-                                                                                  // 1: Display the time only
-                                                                                  // 2: Display the date only
-                                                                                  //
-static bool displayTimeIn12HourFormat = DISPLAY_TIME_IN_TWELVE_HOUR_FORMAT;       // if set to true for 24 hour time format, set to false for 12 hour time format
-                                                                                  //
-static bool displayAMPM = DISPLAY_AM_PM;                                          // if displayTimeIn12HourFormat is true, then a AM/PM indicator will be displayed if true otherwise a AM/PM indicator will not be displayed
-                                                                                  //
-static bool displayTimeWithSeconds = DISPLAY_TIME_WITH_SECONDS;                   // if set to true display seconds, it set to false don't display the seconds
-                                                                                  //
-static bool displayTimeWith10thsOfASecond = DISPLAY_TIME_WITH_10THS_OF_A_SECOND;  // if set to true display 10th of a second, it set to false don't display 10th of a second
-                                                                                  //
-static int dateFormat = DATE_FORMAT;                                              // Date formats:
-                                                                                  //   0: YYYY-MM-DD
-                                                                                  //   1: YYYY/MM/DD
-                                                                                  //   2: YY-MM-DD
-                                                                                  //   3: YY/MM/DD
-                                                                                  //   4: MM-DD-YY
-                                                                                  //   5: MM/DD/YY
-                                                                                  //   6: MM-DD
-                                                                                  //   7: MM/DD
-                                                                                  //   8: DD-MM
-                                                                                  //   9: DD/MM
-                                                                                  //
-const int showLeadingZero = 0;                                                    //
-const int showLeadingZeroAsBlank = 1;                                             //
-const int dontShowLeadingZero = 2;                                                //
-static int showLeadingZeroTubeStyle = SHOW_LEADING_ZERO_TUBE_STYLE;               // 0: Show a leading zero as a zero tube
-                                                                                  // 1: Show a leading zero as a blank tube
-                                                                                  // 2: Don't show a leading zero
-const int blackBackground = 0;                                                    //
-const int whiteBackground = 1;                                                    //
-const int colourEverySecond = 2;                                                  //
-static int backgroundFormat = BACKGROUND_FORMAT;                                  // Background formats:
-                                                                                  //   0: black background
-                                                                                  //   1: white background
-                                                                                  //   2: unique background colour every second
+static int displayTimeAndDate = DISPLAY_TIME_AND_DATE;                           // 0: Display the time and date
+                                                                                 // 1: Display the time only
+                                                                                 // 2: Display the date only
+                                                                                 //
+static bool displayTimeIn12HourFormat = DISPLAY_TIME_IN_TWELVE_HOUR_FORMAT;      // if set to true for 24 hour time format, set to false for 12 hour time format
+                                                                                 //
+static bool displayAMPM = DISPLAY_AM_PM;                                         // if displayTimeIn12HourFormat is true, then a AM/PM indicator will be displayed if true otherwise a AM/PM indicator will not be displayed
+                                                                                 //
+static bool displayTimeWithSeconds = DISPLAY_TIME_WITH_SECONDS;                  // if set to true display seconds, it set to false don't display the seconds
+                                                                                 //
+static bool displayTimeWith10thsOfASecond = DISPLAY_TIME_WITH_10THS_OF_A_SECOND; // if set to true display 10th of a second, it set to false don't display 10th of a second
+                                                                                 //
+static int dateFormat = DATE_FORMAT;                                             // Date formats:
+                                                                                 //   0: YYYY-MM-DD
+                                                                                 //   1: YYYY/MM/DD
+                                                                                 //   2: YY-MM-DD
+                                                                                 //   3: YY/MM/DD
+                                                                                 //   4: MM-DD-YY
+                                                                                 //   5: MM/DD/YY
+                                                                                 //   6: MM-DD
+                                                                                 //   7: MM/DD
+                                                                                 //   8: DD-MM
+                                                                                 //   9: DD/MM
+                                                                                 //
+const int showLeadingZero = 0;                                                   //
+const int showLeadingZeroAsBlank = 1;                                            //
+const int dontShowLeadingZero = 2;                                               //
+static int showLeadingZeroTubeStyle = SHOW_LEADING_ZERO_TUBE_STYLE;              // 0: Show a leading zero as a zero tube
+                                                                                 // 1: Show a leading zero as a blank tube
+                                                                                 // 2: Don't show a leading zero
+const int blackBackground = 0;                                                   //
+const int whiteBackground = 1;                                                   //
+const int colourEverySecond = 2;                                                 //
+static int backgroundFormat = BACKGROUND_FORMAT;                                 // Background formats:
+                                                                                 //   0: black background
+                                                                                 //   1: white background
+                                                                                 //   2: unique background colour every second
 
 static int32_t defaultBackgroundColour = TFT_BLACK;
 bool showSettingsTriggeredFromAboutWindow = false;
@@ -152,17 +156,17 @@ const int numberOfSavedSettingsInEEPROM = 8;
 const int eepromMaxSize = eepromSettingsStartingAddressForSettings + numberOfSavedSettingsInEEPROM + 1;
 
 // Button stuff
-#define TOP_BUTTON 14    // Button marked 'Key' on LILYGO T-Display-S3
-#define BOTTOM_BUTTON 0  // Button marked 'BOT' on LILYGO T-Display-S3
+#define TOP_BUTTON 14   // Button marked 'Key' on LILYGO T-Display-S3
+#define BOTTOM_BUTTON 0 // Button marked 'BOT' on LILYGO T-Display-S3
 
 // other misc stuff
-int32_t TFT_Width = 320;   // TFT Width
-int32_t TFT_Height = 170;  // TFT Height
+int32_t TFT_Width = 320;  // TFT Width
+int32_t TFT_Height = 170; // TFT Height
 
 static int lastSignificantTimeChange = -1;
 
-const char* PARAM_INPUT_SSID = "ssid";
-const char* PARAM_INPUT_PASSWORD = "password";
+const char *PARAM_INPUT_SSID = "ssid";
+const char *PARAM_INPUT_PASSWORD = "password";
 
 const String nothingWasEntered = "**null**";
 
@@ -218,7 +222,6 @@ const char htmlFooter[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-
 const char htmlGetWifiCredentials[] PROGMEM = R"rawliteral(
      <br>
      Network:&nbsp
@@ -234,7 +237,6 @@ const char htmlGetWifiCredentials[] PROGMEM = R"rawliteral(
      <input type="submit" alt="Update" value="OK"> 
 )rawliteral";
 
-
 const char htmlConfirmWIFI[] PROGMEM = R"rawliteral(
      The Wi-Fi credentials entered are now being tested.<br>
      <br>
@@ -249,14 +251,21 @@ const char htmlConfirmWIFI[] PROGMEM = R"rawliteral(
      <br>
 )rawliteral";
 
+void nonBlockingDelay(TickType_t ms)
+{
 
-void SetupSerialMonitor() {
+  vTaskDelay(ms / portTICK_PERIOD_MS);
+}
 
-  if (debugIsOn) {
+void SetupSerialMonitor()
+{
+
+  if (debugIsOn)
+  {
 
     Serial.begin(serialMonitorSpeed);
 
-    delay(500);
+    nonBlockingDelay(500);
 
     Serial.println("");
     Serial.println("");
@@ -264,22 +273,26 @@ void SetupSerialMonitor() {
   };
 }
 
-void SetupButtons() {
+void SetupButtons()
+{
 
   // Setup buttons on LILYGO T-Display-S3
   pinMode(TOP_BUTTON, INPUT_PULLUP);
   pinMode(BOTTOM_BUTTON, INPUT_PULLUP);
 }
 
-bool checkButton(int pinNumber) {
+bool checkButton(int pinNumber)
+{
 
   bool returnValue = false;
 
-  if (digitalRead(pinNumber) == 0) {
+  if (digitalRead(pinNumber) == 0)
+  {
 
-    delay(10);  // weed out false positives caused by debounce
+    delay(10); // weed out false positives caused by debounce
 
-    if (digitalRead(pinNumber) == 0) {
+    if (digitalRead(pinNumber) == 0)
+    {
 
       // hold here until the button is released
       while (digitalRead(pinNumber) == 0)
@@ -292,17 +305,21 @@ bool checkButton(int pinNumber) {
   return returnValue;
 }
 
-bool IsTheTopButtonPressed() {
+bool IsTheTopButtonPressed()
+{
   return checkButton(TOP_BUTTON);
 }
 
-bool IsTheBottomButtonPressed() {
+bool IsTheBottomButtonPressed()
+{
   return checkButton(BOTTOM_BUTTON);
 }
 
-void clearDisplay(uint32_t backgroundColourOverride, bool immediatelyClearDisplay = true) {
+void clearDisplay(uint32_t backgroundColourOverride, bool immediatelyClearDisplay = true)
+{
 
-  if (backgroundColourOverride == noBackgroundColourOverride) {
+  if (backgroundColourOverride == noBackgroundColourOverride)
+  {
 
     if (backgroundFormat == blackBackground)
       sprite.fillSprite(TFT_BLACK);
@@ -310,18 +327,21 @@ void clearDisplay(uint32_t backgroundColourOverride, bool immediatelyClearDispla
       sprite.fillSprite(TFT_WHITE);
     else
       sprite.fillSprite(GetTimeSensitiveBackgroundColour());
-
-  } else {
+  }
+  else
+  {
     sprite.fillSprite(backgroundColourOverride);
   };
 
-  if (immediatelyClearDisplay) {
+  if (immediatelyClearDisplay)
+  {
     needToDrawTubes = true;
     drawDisplay();
   };
 }
 
-void initializeEEPROM() {
+void initializeEEPROM()
+{
 
   if (debugIsOn)
     Serial.println("Initializing EEPROM");
@@ -339,7 +359,8 @@ void initializeEEPROM() {
   delay(1000);
 }
 
-void clearWifiCredentialsfromNonVolatileMemory() {
+void clearWifiCredentialsfromNonVolatileMemory()
+{
 
   if (debugIsOn)
     Serial.println("Clearing Wi-Fi credentials from non volatile memory");
@@ -357,22 +378,27 @@ void clearWifiCredentialsfromNonVolatileMemory() {
   delay(1000);
 }
 
-void StoreWifiSSIDandPasswordInNonVolatileMemory() {
+void StoreWifiSSIDandPasswordInNonVolatileMemory()
+{
 
   const int WifiSSIDStartingAddress = eepromDataStartingAddress + confirmEEPROMHasBeenIntialize.length() + 1;
   const int WifiPasswordStartingAddress = WifiSSIDStartingAddress + eepromMaxSSIDLength + 1;
 
   bool commitRequired = false;
 
-  for (int i = 0; i < wifiSSID.length(); i++) {
-    if (EEPROM.read(WifiSSIDStartingAddress + i) != wifiSSID[i]) {
+  for (int i = 0; i < wifiSSID.length(); i++)
+  {
+    if (EEPROM.read(WifiSSIDStartingAddress + i) != wifiSSID[i])
+    {
       EEPROM.write(WifiSSIDStartingAddress + i, wifiSSID[i]);
       commitRequired = true;
     };
   };
 
-  for (int i = 0; i < wifiPassword.length(); i++) {
-    if (EEPROM.read(WifiPasswordStartingAddress + i) != wifiPassword[i]) {
+  for (int i = 0; i < wifiPassword.length(); i++)
+  {
+    if (EEPROM.read(WifiPasswordStartingAddress + i) != wifiPassword[i])
+    {
       EEPROM.write(WifiPasswordStartingAddress + i, wifiPassword[i]);
       commitRequired = true;
     };
@@ -382,7 +408,8 @@ void StoreWifiSSIDandPasswordInNonVolatileMemory() {
     EEPROM.commit();
 }
 
-void LoadWifiSSIDandPasswordFromNonVolatileMemory() {
+void LoadWifiSSIDandPasswordFromNonVolatileMemory()
+{
 
   const int SSIDStartingAddress = eepromDataStartingAddress + confirmEEPROMHasBeenIntialize.length() + 1;
   const int WifiStartingAddress = SSIDStartingAddress + eepromMaxSSIDLength + 1;
@@ -395,20 +422,23 @@ void LoadWifiSSIDandPasswordFromNonVolatileMemory() {
 
   i = 0;
   c = EEPROM.read(SSIDStartingAddress + i++);
-  while (c != 0) {
+  while (c != 0)
+  {
     wifiSSID.concat(String(c));
     c = EEPROM.read(SSIDStartingAddress + i++);
   };
 
   i = 0;
   c = EEPROM.read(WifiStartingAddress + i++);
-  while (c != 0) {
+  while (c != 0)
+  {
     wifiPassword.concat(String(c));
     c = EEPROM.read(WifiStartingAddress + i++);
   };
 }
 
-void loadDefaultSettings() {
+void loadDefaultSettings()
+{
 
   displayTimeAndDate = DISPLAY_TIME_AND_DATE;
   displayTimeIn12HourFormat = DISPLAY_TIME_IN_TWELVE_HOUR_FORMAT;
@@ -420,7 +450,8 @@ void loadDefaultSettings() {
   backgroundFormat = BACKGROUND_FORMAT;
 };
 
-void StoreSettingsInNonVolatileMemory() {
+void StoreSettingsInNonVolatileMemory()
+{
 
   byte Setting[numberOfSavedSettingsInEEPROM];
 
@@ -437,8 +468,10 @@ void StoreSettingsInNonVolatileMemory() {
 
   bool commitRequired = false;
 
-  for (int i = 0; i < numberOfSavedSettingsInEEPROM; i++) {
-    if (EEPROM.read(eepromSettingsStartingAddressForSettings + i) != Setting[i]) {
+  for (int i = 0; i < numberOfSavedSettingsInEEPROM; i++)
+  {
+    if (EEPROM.read(eepromSettingsStartingAddressForSettings + i) != Setting[i])
+    {
       EEPROM.write(eepromSettingsStartingAddressForSettings + i, Setting[i]);
       commitRequired = true;
     };
@@ -448,7 +481,8 @@ void StoreSettingsInNonVolatileMemory() {
     EEPROM.commit();
 };
 
-void LoadSettingsFromNonVolatileMemory() {
+void LoadSettingsFromNonVolatileMemory()
+{
 
   byte Setting[numberOfSavedSettingsInEEPROM];
 
@@ -465,7 +499,8 @@ void LoadSettingsFromNonVolatileMemory() {
   backgroundFormat = Setting[7];
 }
 
-bool confirmUserWantsToResetEEPROM() {
+bool confirmUserWantsToResetEEPROM()
+{
 
   bool returnValue;
 
@@ -489,14 +524,17 @@ bool confirmUserWantsToResetEEPROM() {
 
   drawDisplay();
 
-  while (true) {
+  while (true)
+  {
 
-    if (IsTheTopButtonPressed()) {
+    if (IsTheTopButtonPressed())
+    {
       returnValue = true;
       break;
     };
 
-    if (IsTheBottomButtonPressed()) {
+    if (IsTheBottomButtonPressed())
+    {
       returnValue = false;
       break;
     };
@@ -505,8 +543,8 @@ bool confirmUserWantsToResetEEPROM() {
   return returnValue;
 };
 
-
-void SetupEEPROM() {
+void SetupEEPROM()
+{
 
   // The EEPROM is used to save and store settings so that they are retained when the device is powered off and restored when it is powered back on
   // data is stored in the EEPROM as follows:
@@ -553,12 +591,14 @@ void SetupEEPROM() {
   LoadSettingsFromNonVolatileMemory();
 };
 
-void drawDisplay() {
+void drawDisplay()
+{
 
   sprite.pushSprite(0, 0);
 }
 
-uint32_t GetTimeSensitiveBackgroundColour() {
+uint32_t GetTimeSensitiveBackgroundColour()
+{
 
   // note: the colour range for a TFT display is red (0-31); green (0-63); blue (0-31)
 
@@ -571,80 +611,90 @@ uint32_t GetTimeSensitiveBackgroundColour() {
   const int lastBlue = 2;
   static int ColourToChange = lastBlue;
 
-  switch (backgroundColourRotationMethod) {
+  switch (backgroundColourRotationMethod)
+  {
 
-    // Method 0:
-    // Start at a random colour and then progressively rotate through all feasable colours each time this routine is called
-    // increasing red, then green, then blue each in turn
-    case 0:
+  // Method 0:
+  // Start at a random colour and then progressively rotate through all feasable colours each time this routine is called
+  // increasing red, then green, then blue each in turn
+  case 0:
+  {
+
+    if (ColourToChange == lastRed)
+    {
+      red++;
+      if (red > 31)
+        red = 0;
+      ColourToChange = lastGreen;
+    }
+    else
+    {
+      if (ColourToChange == lastGreen)
       {
-
-        if (ColourToChange == lastRed) {
-          red++;
-          if (red > 31)
-            red = 0;
-          ColourToChange = lastGreen;
-        } else {
-          if (ColourToChange == lastGreen) {
-            green++;
-            if (green > 63)
-              green = 0;
-            ColourToChange = lastBlue;
-          } else {
-            blue++;
-            if (blue > 31)
-              blue = 0;
-            ColourToChange = lastRed;
-          };
-        };   
-
-        break;
+        green++;
+        if (green > 63)
+          green = 0;
+        ColourToChange = lastBlue;
       }
-
-    // Method 1:
-    // start at a random colour and then progressively rotate through all feasable colours each time this routine is called
-    // by increasing red from 0 to 31, then within that green from 0 to 63, then within that blue from 0 to 31
-    case 1:
+      else
       {
-
-        red++;
-        if (red > 31) {
-          red = 0;
-          green++;
-          if (green > 63) {
-            green = 0;
-            blue++;
-            if (blue > 31) {
-              blue = 0;
-            };
-          };
-        };
-
-        break;
-      }
-
-      // Method 2: each second of the day will have a unique colour associated with it
-      // red will be used for hours, blue will be used for minutes, green will be used for seconds
-
-    case 2:
-      {
-
-        struct timeval tvTime;
-        gettimeofday(&tvTime, NULL);
-
-        int iTotal_seconds = tvTime.tv_sec;
-        struct tm* ptm = localtime((const time_t*)&iTotal_seconds);
-
-        int iHour = ptm->tm_hour;
-        int iMinute = ptm->tm_min;
-        int iSec = ptm->tm_sec;
-
-        uint32_t red = iHour + 3;
-        uint32_t blue = (iMinute / 2) + 1;
-        uint32_t green = iSec + 1;
-
-        break;
+        blue++;
+        if (blue > 31)
+          blue = 0;
+        ColourToChange = lastRed;
       };
+    };
+
+    break;
+  }
+
+  // Method 1:
+  // start at a random colour and then progressively rotate through all feasable colours each time this routine is called
+  // by increasing red from 0 to 31, then within that green from 0 to 63, then within that blue from 0 to 31
+  case 1:
+  {
+
+    red++;
+    if (red > 31)
+    {
+      red = 0;
+      green++;
+      if (green > 63)
+      {
+        green = 0;
+        blue++;
+        if (blue > 31)
+        {
+          blue = 0;
+        };
+      };
+    };
+
+    break;
+  }
+
+    // Method 2: each second of the day will have a unique colour associated with it
+    // red will be used for hours, blue will be used for minutes, green will be used for seconds
+
+  case 2:
+  {
+
+    struct timeval tvTime;
+    gettimeofday(&tvTime, NULL);
+
+    int iTotal_seconds = tvTime.tv_sec;
+    struct tm *ptm = localtime((const time_t *)&iTotal_seconds);
+
+    int iHour = ptm->tm_hour;
+    int iMinute = ptm->tm_min;
+    int iSec = ptm->tm_sec;
+
+    uint32_t red = iHour + 3;
+    uint32_t blue = (iMinute / 2) + 1;
+    uint32_t green = iSec + 1;
+
+    break;
+  };
   };
 
   uint32_t result = (blue << (6 + 5)) | (green << 5) | red;
@@ -652,8 +702,8 @@ uint32_t GetTimeSensitiveBackgroundColour() {
   return result;
 }
 
-
-void SetupDisplay() {
+void SetupDisplay()
+{
 
   pinMode(PIN_POWER_ON, OUTPUT);
   digitalWrite(PIN_POWER_ON, HIGH);
@@ -668,7 +718,7 @@ void SetupDisplay() {
 
   MyNixieTubes.setDisplayDimensions(TFT_Width, TFT_Height);
 
-  showPanel.setRotation(1);  // 0 = 0 degrees , 1 = 90 degrees, 2 = 180 degrees, 3 = 270 degrees
+  showPanel.setRotation(1); // 0 = 0 degrees , 1 = 90 degrees, 2 = 180 degrees, 3 = 270 degrees
 
   randomSeed(analogRead(0));
 
@@ -692,7 +742,8 @@ void SetupDisplay() {
   */
 }
 
-bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
+bool SetupWiFiWithExistingCredentials(bool updateDisplay = true)
+{
 
   bool notyetconnected = true;
   int attempt = 1;
@@ -700,16 +751,17 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
   float timeWaited;
 
   const int leftBoarder = 0;
-  const int displayLineNumber[] = { 0, 16, 32, 48, 64, 80 };
+  const int displayLineNumber[] = {0, 16, 32, 48, 64, 80};
   int lineCounter = 0;
 
   String message;
 
-  if (updateDisplay) {
+  if (updateDisplay)
+  {
     clearDisplay(TFT_BLACK);
 
     showPanel.setTextColor(WIFI_CONNECTING_STATUS_COLOUR, TFT_BLACK);
-    sprite.setTextDatum(TL_DATUM);  // position text at the top left
+    sprite.setTextDatum(TL_DATUM); // position text at the top left
 
     message = "Attempting to connect to ";
     message.concat(wifiSSID);
@@ -723,7 +775,8 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
 
   const int maxConnectionAttempts = 5;
 
-  while ((notyetconnected) && (attempt <= maxConnectionAttempts)) {
+  while ((notyetconnected) && (attempt <= maxConnectionAttempts))
+  {
 
     waitThisManySecondsForAConnection = 5 * attempt;
 
@@ -733,16 +786,18 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
     unsigned long startedWaiting = millis();
     unsigned long waitUntil = startedWaiting + (waitThisManySecondsForAConnection * 1000);
 
-    while ((WiFi.status() != WL_CONNECTED) && (millis() < waitUntil)) {
+    while ((WiFi.status() != WL_CONNECTED) && (millis() < waitUntil))
+    {
 
       timeWaited = millis() - startedWaiting;
 
-      if (updateDisplay) {
+      if (updateDisplay)
+      {
         message = "Attempt ";
         message.concat(attempt);
         message.concat(" of ");
         message.concat(String(maxConnectionAttempts));
-        message.concat("    ");  // add a few spaces to the end of the message to effectively clear the balance of the current line
+        message.concat("    "); // add a few spaces to the end of the message to effectively clear the balance of the current line
 
         showPanel.drawString(message, leftBoarder, displayLineNumber[2], 2);
 
@@ -751,10 +806,12 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
         message.concat(String(timeWaited / 1000, 1));
 
         message.concat(" seconds in this attempt");
-        message.concat("     ");  // add a few spaces to the end of the message to effectively clear the balance of the show line
+        message.concat("     "); // add a few spaces to the end of the message to effectively clear the balance of the show line
 
         showPanel.drawString(message, leftBoarder, displayLineNumber[3], 2);
-      } else {
+      }
+      else
+      {
 
         if (setupComplete)
           UpdateClock();
@@ -763,7 +820,8 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
 
     if (WiFi.status() == WL_CONNECTED)
       notyetconnected = false;
-    else {
+    else
+    {
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
     };
@@ -771,7 +829,8 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
     attempt++;
   };
 
-  if (notyetconnected) {
+  if (notyetconnected)
+  {
 
     message = "Could not conenct";
 
@@ -779,8 +838,9 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
       Serial.println(message);
     if (updateDisplay)
       showPanel.drawString(message, leftBoarder, displayLineNumber[5], 2);
-
-  } else {
+  }
+  else
+  {
 
     message = "Connected at IP address ";
     message.concat(WiFi.localIP().toString());
@@ -795,7 +855,8 @@ bool SetupWiFiWithExistingCredentials(bool updateDisplay = true) {
   return !notyetconnected;
 };
 
-void scanAvailableNetworks() {
+void scanAvailableNetworks()
+{
 
   if (debugIsOn)
     Serial.println("** Scan Networks **");
@@ -806,15 +867,18 @@ void scanAvailableNetworks() {
 
   int numSsid = WiFi.scanNetworks();
 
-  if (numSsid < 1) {
+  if (numSsid < 1)
+  {
 
     if (debugIsOn)
       Serial.println("Couldn't find any Wi-Fi networks");
-
-  } else {
+  }
+  else
+  {
 
     // print the list of networks seen:
-    if (debugIsOn) {
+    if (debugIsOn)
+    {
       Serial.print("Number of available networks: ");
       Serial.println(numSsid);
     };
@@ -824,9 +888,11 @@ void scanAvailableNetworks() {
 
     String discoveredSSIDs[numSsid];
 
-    for (int i = 0; i < numSsid; i++) {
+    for (int i = 0; i < numSsid; i++)
+    {
 
-      if (debugIsOn) {
+      if (debugIsOn)
+      {
         Serial.print(i);
         Serial.print(") ");
         Serial.print(WiFi.SSID(i));
@@ -843,10 +909,12 @@ void scanAvailableNetworks() {
     availableNetworks = "";
     String lastEntryAdded = "";
 
-    for (int i = 0; i < numSsid; i++) {
+    for (int i = 0; i < numSsid; i++)
+    {
 
       // ensure duplicate SSIDS are not added twice
-      if (discoveredSSIDs[i] != lastEntryAdded) {
+      if (discoveredSSIDs[i] != lastEntryAdded)
+      {
 
         lastEntryAdded = discoveredSSIDs[i];
 
@@ -860,7 +928,8 @@ void scanAvailableNetworks() {
   };
 }
 
-bool SetupWifiWithNewCredentials() {
+bool SetupWifiWithNewCredentials()
+{
 
   const int leftBoarder = 0;
 
@@ -873,7 +942,7 @@ bool SetupWifiWithNewCredentials() {
 
   clearDisplay(TFT_BLACK);
   showPanel.setTextColor(WIFI_CONNECTING_STATUS_COLOUR, TFT_BLACK);
-  sprite.setTextDatum(TL_DATUM);  // position text at the top left
+  sprite.setTextDatum(TL_DATUM); // position text at the top left
 
   String message = "Nixie Clock setup ...";
   showPanel.drawString(message, leftBoarder, displayLineNumber[lineCounter++], 2);
@@ -882,7 +951,8 @@ bool SetupWifiWithNewCredentials() {
 
   bool accessPointNeedsToBeConfigured = true;
 
-  while (accessPointNeedsToBeConfigured) {
+  while (accessPointNeedsToBeConfigured)
+  {
 
     if (debugIsOn)
       Serial.println("Configuring access point...");
@@ -891,36 +961,38 @@ bool SetupWifiWithNewCredentials() {
     WiFi.softAPConfig(accessPointIPaddr, accessPointIPaddr, accessPointIPMask);
     IPAddress myIP = WiFi.softAPIP();
 
-    if (debugIsOn) {
+    if (debugIsOn)
+    {
       Serial.print("Access Point IP Address: ");
       Serial.println(myIP);
     };
 
-    accessPointServer.onNotFound([](AsyncWebServerRequest* request) {
+    accessPointServer.onNotFound([](AsyncWebServerRequest *request)
+                                 {
       if (debugIsOn)
         Serial.println("Not found: " + String(request->url()));
-      request->redirect("/");
-    });
+      request->redirect("/"); });
 
-    accessPointServer.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    accessPointServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+                         {
       String html = String(htmlHeader);
       html.concat(htmlGetWifiCredentials);
       html.replace("$ssid$", "");
       html.replace("$errors$", " ");
       html.replace("$options$", availableNetworks);
       html.concat(htmlFooter);
-      request->send(200, "text/html", html);
-    });
+      request->send(200, "text/html", html); });
 
-    accessPointServer.on("/confirmed", HTTP_GET, [](AsyncWebServerRequest* request) {
+    accessPointServer.on("/confirmed", HTTP_GET, [](AsyncWebServerRequest *request)
+                         {
       String html = String(htmlHeader);
       html.concat(htmlConfirmWIFI);
       html.replace("$ACCESS POINT$", String(AccessPointSSID));
       html.concat(htmlFooter);
-      request->send(200, "text/html", html);
-    });
+      request->send(200, "text/html", html); });
 
-    accessPointServer.on("/get", HTTP_GET, [](AsyncWebServerRequest* request) {
+    accessPointServer.on("/get", HTTP_GET, [](AsyncWebServerRequest *request)
+                         {
       String html = String(htmlHeader);
       String errorMessage = "";
 
@@ -997,13 +1069,12 @@ bool SetupWifiWithNewCredentials() {
 
         html.concat(htmlFooter);
         request->send(200, "text/html", html);
-      };
-    });
+      }; });
 
-    accessPointevents.onConnect([](AsyncEventSourceClient* client) {
+    accessPointevents.onConnect([](AsyncEventSourceClient *client)
+                                {
       if (debugIsOn)
-        Serial.println("Access Point server connected");
-    });
+        Serial.println("Access Point server connected"); });
 
     accessPointServer.addHandler(&accessPointevents);
 
@@ -1037,9 +1108,11 @@ bool SetupWifiWithNewCredentials() {
 
     // assumes network requires a password
 
-    while ((currentSSID == "") || (currentPassword == "")) {
+    while ((currentSSID == "") || (currentPassword == ""))
+    {
 
-      if (checkButton(TOP_BUTTON) || checkButton(BOTTOM_BUTTON)) {
+      if (checkButton(TOP_BUTTON) || checkButton(BOTTOM_BUTTON))
+      {
         // early out
         allowAccessToNetwork = false;
         setTimeAndDateToTheTurnOfTheCentury();
@@ -1076,7 +1149,8 @@ bool SetupWifiWithNewCredentials() {
 
     bool WifiSetupSucceeded = false;
 
-    if (SetupWiFiWithExistingCredentials()) {
+    if (SetupWiFiWithExistingCredentials())
+    {
 
       WifiSetupSucceeded = true;
 
@@ -1089,8 +1163,9 @@ bool SetupWifiWithNewCredentials() {
       accessPointNeedsToBeConfigured = false;
 
       return true;
-
-    } else {
+    }
+    else
+    {
 
       lineCounter++;
 
@@ -1099,7 +1174,7 @@ bool SetupWifiWithNewCredentials() {
 
       lineCounter++;
 
-      message = "Automatically restarting in ten seonds ... ";
+      message = "Automatically restarting in ten seconds ... ";
       showPanel.drawString(message, leftBoarder, displayLineNumber[lineCounter++], 2);
 
       delay(10000);
@@ -1110,26 +1185,33 @@ bool SetupWifiWithNewCredentials() {
 
 // ************************************************************************************************************************************************************
 
-bool getNTPTime() {
+bool setLocalTimeFromNTPTime()
+{
 
   bool returnValue = false;
 
   struct tm timeinfo;
 
-  if (getLocalTime(&timeinfo)) {
-
+  if (getLocalTime(&timeinfo, 10000U))
+  {
     time_t t = mktime(&timeinfo);
-    struct timeval now = { .tv_sec = t };
+    struct timeval now = {.tv_sec = t};
     settimeofday(&now, NULL);
     if (debugIsOn)
       Serial.printf("Time set to: %s", asctime(&timeinfo));
     returnValue = true;
+  }
+  else
+  {
+    if (debugIsOn)
+      Serial.println("Failed to obtain local time");
   };
 
   return returnValue;
 }
 
-void setTimeAndDateToTheTurnOfTheCentury() {
+void setTimeAndDateToTheTurnOfTheCentury()
+{
 
   Serial.println("Setting time to the turn of the century.");
 
@@ -1145,7 +1227,23 @@ void setTimeAndDateToTheTurnOfTheCentury() {
   rtc.setTime(Second, Minute, Hour, Day, Month, Year);
 }
 
-void SetupNTPTime() {
+void printNTPStatus()
+{
+  Serial.println("NTP Debug Info:");
+  Serial.print("Primary NTP: ");
+  Serial.println(primaryNTPServer);
+  Serial.print("Secondary NTP: ");
+  Serial.println(secondaryNTPServer);
+  Serial.print("Tertiary NTP: ");
+  Serial.println(tertiaryNTPServer);
+  Serial.print("Timezone: ");
+  Serial.println(timeZone);
+  Serial.print("WiFi Status: ");
+  Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+}
+
+void SetupNTPTime()
+{
 
   const unsigned long oneDayFromNow = 24 * 60 * 60 * 1000;
 
@@ -1154,29 +1252,84 @@ void SetupNTPTime() {
 
   bool timeWasSuccessfullySet = false;
 
-  if (allowAccessToTimeServer) {
+  if (allowAccessToTimeServer)
+  {
 
-    configTime(0, 0, primaryNTPServer, secondaryNTPServer, tertiaryNTPSever);
-    setenv("TZ", timeZone, 1);
-    tzset();
+    tm *timeinfo;
+    timeval tv;
+    time_t now;
 
-    timeWasSuccessfullySet = getNTPTime();
-  };
+    networkTimeSyncComplete = false;
 
-  if (!timeWasSuccessfullySet) {
+    sntp_set_time_sync_notification_cb([](struct timeval *tv)
+                                       { networkTimeSyncComplete = true; });
+
+    configTzTime(timeZone, primaryNTPServer, secondaryNTPServer, tertiaryNTPServer);
 
     if (debugIsOn)
-      Serial.printf("Time could not be set from NTP server");
+    {
+      Serial.println("");
+      Serial.println("Waiting for time synchronization");
+    };
 
-    setTimeAndDateToTheTurnOfTheCentury();
-  };
+    const unsigned long fortySecondTimeout = 40000UL;
+    unsigned long startWaitTime = millis();
 
-  nextTimeCheck = millis() + oneDayFromNow;
+    while (!networkTimeSyncComplete && (WiFi.status() == WL_CONNECTED) && ((millis() - startWaitTime) < fortySecondTimeout))
+    {
+      if (debugIsOn)
+        Serial.print("*");
+      nonBlockingDelay(10);
+    }
+
+    if (debugIsOn)
+      Serial.println("");
+
+    if (networkTimeSyncComplete)
+    {
+
+      time(&now);
+      timeinfo = localtime(&now);
+
+      if (debugIsOn)
+      {
+        Serial.print("Time synchronized to: ");
+        Serial.println(String(asctime(timeinfo)));
+      }
+      else
+      {
+        if (debugIsOn)
+          Serial.print("Time synchronization failed!");
+      }
+
+      printNTPStatus();
+
+      timeWasSuccessfullySet = setLocalTimeFromNTPTime();
+    }
+    else
+    {
+      Serial.println("Allow access to time server disallowed in settings ");
+      setTimeAndDateToTheTurnOfTheCentury();
+    };
+
+    if (!timeWasSuccessfullySet)
+    {
+
+      if (debugIsOn)
+        Serial.println("Time could not be set from NTP server");
+
+      setTimeAndDateToTheTurnOfTheCentury();
+    };
+
+    nextTimeCheck = millis() + oneDayFromNow;
+  }
 }
 
-void SetupTimeAndDate() {
+void SetupTimeAndDate()
+{
 
-  if (allowAccessToNetwork) {
+  if (allowAccessToNetwork)
+  {
 
     bool wifiWasConnected;
 
@@ -1185,23 +1338,30 @@ void SetupTimeAndDate() {
     else
       wifiWasConnected = SetupWiFiWithExistingCredentials();
 
-    if (wifiWasConnected) {
+    if (wifiWasConnected)
+    {
+      nonBlockingDelay(1000);
       SetupNTPTime();
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
-    } else {
+    }
+    else
+    {
       setTimeAndDateToTheTurnOfTheCentury();
     }
-
-  } else
+  }
+  else
     setTimeAndDateToTheTurnOfTheCentury();
 }
 
-void RefreshTimeOnceADay() {
+void RefreshTimeOnceADay()
+{
 
-  if (allowAccessToNetwork && allowAccessToTimeServer) {
+  if (allowAccessToNetwork && allowAccessToTimeServer)
+  {
 
-    if (millis() > nextTimeCheck) {
+    if (millis() > nextTimeCheck)
+    {
 
       Serial.println("Next time check reached");
 
@@ -1210,8 +1370,9 @@ void RefreshTimeOnceADay() {
 
       bool timeWasSuccessfullySet = false;
 
-      if (SetupWiFiWithExistingCredentials(false)) {
-        timeWasSuccessfullySet = getNTPTime();
+      if (SetupWiFiWithExistingCredentials(false))
+      {
+        timeWasSuccessfullySet = setLocalTimeFromNTPTime();
         WiFi.disconnect(true);
         WiFi.mode(WIFI_OFF);
       };
@@ -1224,7 +1385,8 @@ void RefreshTimeOnceADay() {
   };
 }
 
-void showClock() {
+void showClock()
+{
 
   static int lastdisplayOption = 0;
   static int lastLine1Length;
@@ -1242,7 +1404,7 @@ void showClock() {
   gettimeofday(&tvTime, NULL);
 
   int iTotal_seconds = tvTime.tv_sec;
-  struct tm* ptm = localtime((const time_t*)&iTotal_seconds);
+  struct tm *ptm = localtime((const time_t *)&iTotal_seconds);
 
   int iYear = ptm->tm_year - 100;
   int iMonth = ptm->tm_mon + 1;
@@ -1262,12 +1424,13 @@ void showClock() {
 
   // Time
 
-  if ((displayTimeAndDate == TimeAndDate) || (displayTimeAndDate == TimeOnly)) {
+  if ((displayTimeAndDate == TimeAndDate) || (displayTimeAndDate == TimeOnly))
+  {
 
     if (displayTimeWith10thsOfASecond)
       sprintf(timeBuffer, "%02d:%02d:%02d.%01d", iHour, iMinute, iSecond, iTenthOfASecond);
-    //else if ((displayTimeWithSeconds && displayAMPM) && (iHour < 10))
-    //  sprintf(timeBuffer, "%01d:%02d:%02d %s", iHour, iMinute, iSecond, ampmIndicator);
+    // else if ((displayTimeWithSeconds && displayAMPM) && (iHour < 10))
+    //   sprintf(timeBuffer, "%01d:%02d:%02d %s", iHour, iMinute, iSecond, ampmIndicator);
     else if (displayTimeWithSeconds && displayAMPM)
       sprintf(timeBuffer, "%02d:%02d:%02d%s", iHour, iMinute, iSecond, ampmIndicator);
     else if (displayTimeWithSeconds && !displayAMPM)
@@ -1277,15 +1440,18 @@ void showClock() {
     else
       sprintf(timeBuffer, "%02d:%02d", iHour, iMinute);
 
-    if (!displayTimeWithSeconds) {
+    if (!displayTimeWithSeconds)
+    {
       colonFlash = !colonFlash;
       if (colonFlash)
         timeBuffer[2] = ' ';
     };
 
-    if (displayTimeIn12HourFormat) {
+    if (displayTimeIn12HourFormat)
+    {
 
-      if ((timeBuffer[0] == '0') & (timeBuffer[1] == '0')) {
+      if ((timeBuffer[0] == '0') & (timeBuffer[1] == '0'))
+      {
         timeBuffer[0] = '1';
         timeBuffer[1] = '2';
       };
@@ -1299,71 +1465,73 @@ void showClock() {
   };
 
   // Date
-  if ((displayTimeAndDate == TimeAndDate) || (displayTimeAndDate == DateOnly)) {
+  if ((displayTimeAndDate == TimeAndDate) || (displayTimeAndDate == DateOnly))
+  {
 
-    switch (dateFormat) {
+    switch (dateFormat)
+    {
 
-      case 0:
-        {
-          int dYear = 2000 + iYear;
-          sprintf(dateBuffer, "%04d-%02d-%02d", dYear, iMonth, iDay);
-          break;
-        }
+    case 0:
+    {
+      int dYear = 2000 + iYear;
+      sprintf(dateBuffer, "%04d-%02d-%02d", dYear, iMonth, iDay);
+      break;
+    }
 
-      case 1:
-        {
-          int dYear = 2000 + iYear;
-          sprintf(dateBuffer, "%04d/%02d/%02d", dYear, iMonth, iDay);
-          break;
-        }
+    case 1:
+    {
+      int dYear = 2000 + iYear;
+      sprintf(dateBuffer, "%04d/%02d/%02d", dYear, iMonth, iDay);
+      break;
+    }
 
-      case 2:
-        {
-          sprintf(dateBuffer, "%02d-%02d-%02d", iYear, iMonth, iDay);
-          break;
-        }
+    case 2:
+    {
+      sprintf(dateBuffer, "%02d-%02d-%02d", iYear, iMonth, iDay);
+      break;
+    }
 
-      case 3:
-        {
-          sprintf(dateBuffer, "%02d/%02d/%02d", iYear, iMonth, iDay);
-          break;
-        }
+    case 3:
+    {
+      sprintf(dateBuffer, "%02d/%02d/%02d", iYear, iMonth, iDay);
+      break;
+    }
 
-      case 4:
-        {
-          sprintf(dateBuffer, "%02d-%02d-%02d", iMonth, iDay, iYear);
-          break;
-        }
+    case 4:
+    {
+      sprintf(dateBuffer, "%02d-%02d-%02d", iMonth, iDay, iYear);
+      break;
+    }
 
-      case 5:
-        {
-          sprintf(dateBuffer, "%02d/%02d/%02d", iMonth, iDay, iYear);
-          break;
-        }
+    case 5:
+    {
+      sprintf(dateBuffer, "%02d/%02d/%02d", iMonth, iDay, iYear);
+      break;
+    }
 
-      case 6:
-        {
-          sprintf(dateBuffer, "%02d-%02d", iMonth, iDay);
-          break;
-        }
+    case 6:
+    {
+      sprintf(dateBuffer, "%02d-%02d", iMonth, iDay);
+      break;
+    }
 
-      case 7:
-        {
-          sprintf(dateBuffer, "%02d/%02d", iMonth, iDay);
-          break;
-        }
+    case 7:
+    {
+      sprintf(dateBuffer, "%02d/%02d", iMonth, iDay);
+      break;
+    }
 
-      case 8:
-        {
-          sprintf(dateBuffer, "%02d-%02d", iDay, iMonth);
-          break;
-        }
+    case 8:
+    {
+      sprintf(dateBuffer, "%02d-%02d", iDay, iMonth);
+      break;
+    }
 
-      case 9:
-        {
-          sprintf(dateBuffer, "%02d/%02d", iDay, iMonth);
-          break;
-        }
+    case 9:
+    {
+      sprintf(dateBuffer, "%02d/%02d", iDay, iMonth);
+      break;
+    }
     };
 
     if ((showLeadingZeroTubeStyle == showLeadingZeroAsBlank) || (showLeadingZeroTubeStyle == dontShowLeadingZero))
@@ -1376,7 +1544,8 @@ void showClock() {
       line2 = String(dateBuffer);
   };
 
-  if (showLeadingZeroTubeStyle == dontShowLeadingZero) {
+  if (showLeadingZeroTubeStyle == dontShowLeadingZero)
+  {
     line1.trim();
     line2.trim();
   };
@@ -1397,10 +1566,13 @@ void showClock() {
 
   bool transparent = (backgroundFormat != blackBackground);
 
-  if (transparent) {
+  if (transparent)
+  {
     needToDrawTubes = true;
     clearDisplay(noBackgroundColourOverride, false);
-  } else if ((lastLine1Length != line1.length()) || (lastLine2Length != line2.length())) {
+  }
+  else if ((lastLine1Length != line1.length()) || (lastLine2Length != line2.length()))
+  {
     lastLine1Length = line1.length();
     lastLine2Length = line2.length();
     needToDrawTubes = true;
@@ -1411,7 +1583,8 @@ void showClock() {
   int screenWidth, screenHeight;
   MyNixieTubes.getScreenDimensions(tubeSize, screenWidth, screenHeight);
 
-  if (displayOptionIncludesTwoLines) {
+  if (displayOptionIncludesTwoLines)
+  {
 
     xOffset = (TFT_Width / 2) - ((screenWidth * line1.length()) / 2);
     yOffset = (TFT_Height - (2 * screenHeight)) / 4;
@@ -1422,8 +1595,9 @@ void showClock() {
     yOffset += (TFT_Height / 2);
 
     MyNixieTubes.DrawNixieTubes(sprite, tubeSize, xOffset, yOffset, needToDrawTubes, transparent, line2);
-
-  } else {
+  }
+  else
+  {
     xOffset = (TFT_Width / 2) - ((screenWidth * line1.length()) / 2);
     yOffset = (TFT_Height / 2) - (screenHeight / 2);
     MyNixieTubes.DrawNixieTubes(sprite, tubeSize, xOffset, yOffset, needToDrawTubes, transparent, line1);
@@ -1435,44 +1609,52 @@ void showClock() {
 
 // ************************************************************************************************************************************************************
 
-void UpdateClock() {
+void UpdateClock()
+{
 
   struct timeval tvTime;
   gettimeofday(&tvTime, NULL);
   int iTotal_seconds = tvTime.tv_sec;
-  struct tm* ptm = localtime((const time_t*)&iTotal_seconds);
+  struct tm *ptm = localtime((const time_t *)&iTotal_seconds);
 
   bool timeIsBeingShown = (displayTimeAndDate != DateOnly);
 
-  if (timeIsBeingShown && displayTimeWith10thsOfASecond) {
+  if (timeIsBeingShown && displayTimeWith10thsOfASecond)
+  {
 
     // update frequency: every 10th of a second
 
     int iTenthOfASecond = tvTime.tv_usec / 100000;
 
-    if (iTenthOfASecond != lastSignificantTimeChange) {
+    if (iTenthOfASecond != lastSignificantTimeChange)
+    {
       lastSignificantTimeChange = iTenthOfASecond;
       showClock();
     };
+  }
+  else
+  {
 
-  } else {
-
-    if (timeIsBeingShown || (backgroundFormat == colourEverySecond)) {
+    if (timeIsBeingShown || (backgroundFormat == colourEverySecond))
+    {
       // update frequency: every second
 
       int iSecond = ptm->tm_sec;
 
-      if (iSecond != lastSignificantTimeChange) {
+      if (iSecond != lastSignificantTimeChange)
+      {
         lastSignificantTimeChange = iSecond;
         showClock();
       };
-
-    } else {
+    }
+    else
+    {
       // update frequency: every day
 
       int iDay = ptm->tm_mday;
 
-      if (iDay != lastSignificantTimeChange) {
+      if (iDay != lastSignificantTimeChange)
+      {
         lastSignificantTimeChange = iDay;
         showClock();
       };
@@ -1480,7 +1662,8 @@ void UpdateClock() {
   }
 }
 
-void FullyRefreshTheClock() {
+void FullyRefreshTheClock()
+{
 
   clearDisplay(noBackgroundColourOverride);
 
@@ -1490,10 +1673,14 @@ void FullyRefreshTheClock() {
   UpdateClock();
 }
 
-void showSettings() {
+void showSettings()
+{
 
-  if ((showSettingsTriggeredFromAboutWindow) || IsTheTopButtonPressed()) {
-  } else return;
+  if ((showSettingsTriggeredFromAboutWindow) || IsTheTopButtonPressed())
+  {
+  }
+  else
+    return;
 
   clearDisplay(TFT_BLACK);
   sprite.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -1505,8 +1692,8 @@ void showSettings() {
   if (debugIsOn)
     Serial.println("Displaying the Settings window");
 
-  const int32_t numberOfSettingsShownOnSettingScreen = numberOfSavedSettingsInEEPROM + 2;  // count includes the Exit selection; the actual Settings and the Setting options can be seen below
-  const int32_t maxOptionsPerSetting = 10;                                                 // each Setting has up to this many options
+  const int32_t numberOfSettingsShownOnSettingScreen = numberOfSavedSettingsInEEPROM + 2; // count includes the Exit selection; the actual Settings and the Setting options can be seen below
+  const int32_t maxOptionsPerSetting = 10;                                                // each Setting has up to this many options
 
   static String selection[numberOfSettingsShownOnSettingScreen][maxOptionsPerSetting];
   static int selectectionsChosenOption[numberOfSettingsShownOnSettingScreen];
@@ -1520,7 +1707,8 @@ void showSettings() {
   int currentSettingIndex = 0;
   int currentOptionIndex = 0;
 
-  if (!initialized) {
+  if (!initialized)
+  {
 
     // this only needs to be done once
 
@@ -1608,52 +1796,63 @@ void showSettings() {
 
   selectectionsChosenOption[8] = 0;
 
-  // contine to loop here until the user chooses to exit the Settings windows
+  // continue to loop here until the user chooses to exit the Settings windows
 
   bool showTheSettingsWindow = true;
-  while (showTheSettingsWindow) {
+  while (showTheSettingsWindow)
+  {
 
-    if (checkButton(TOP_BUTTON)) {
+    if (checkButton(TOP_BUTTON))
+    {
 
       aButtonHasBeenPushed = true;
 
       if (currentSettingIndex == (numberOfSettingsShownOnSettingScreen - 1))
-
+      {
         // User has choosen to return to the top setting
         currentSettingIndex = -1;
-
+      }
       else
+      {
 
         // User has choosen to advance to the next setting
 
         // special processing if user selects to display time without seconds
         if (currentSettingIndex == 2)
-          if (selectectionsChosenOption[2] == 1) {
-            selectectionsChosenOption[4] = 1;  // unset display time with 10ths of a second
-          };
-
-      // special processing if user selectes to display time with the am/pm indicator
-      if (currentSettingIndex == 3)
-        if (selectectionsChosenOption[3] == 0)
-          selectectionsChosenOption[4] = 1;  // unset display time with 10ths of a second
-
-      // special processing if user selects to display time with 10ths of a second
-      if (currentSettingIndex == 4)
-        if (selectectionsChosenOption[4] == 0) {
-          selectectionsChosenOption[2] = 0;  // set display option to display in seconds
-          selectectionsChosenOption[3] = 1;  // unset display am/pm
+        {
+          if (selectectionsChosenOption[2] == 1)
+          {
+            selectectionsChosenOption[4] = 1; // unset display time with 10ths of a second
+          }
         };
 
-      currentSettingIndex++;
+        // special processing if user had selected to display time with the am/pm indicator
+        if (currentSettingIndex == 3)
+          if (selectectionsChosenOption[3] == 0)
+            selectectionsChosenOption[4] = 1; // unset display time with 10ths of a second
+
+        // special processing if user selects to display time with 10ths of a second
+        if (currentSettingIndex == 4)
+          if (selectectionsChosenOption[4] == 0)
+          {
+            selectectionsChosenOption[2] = 0; // set display option to display in seconds
+            selectectionsChosenOption[3] = 1; // unset display am/pm
+          };
+
+        currentSettingIndex++;
+            };
     };
 
-    if (checkButton(BOTTOM_BUTTON)) {
+    if (checkButton(BOTTOM_BUTTON))
+    {
 
-      if (currentSettingIndex == (numberOfSettingsShownOnSettingScreen - 1)) {
+      if (currentSettingIndex == (numberOfSettingsShownOnSettingScreen - 1))
+      {
 
         // User has chosen to exit
 
-        if (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2] == 0) {
+        if (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2] == 0)
+        {
 
           // save settings
 
@@ -1669,7 +1868,8 @@ void showSettings() {
           StoreSettingsInNonVolatileMemory();
         };
 
-        if (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2] == 2) {
+        if (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2] == 2)
+        {
 
           // retore default settings
 
@@ -1678,7 +1878,8 @@ void showSettings() {
           StoreSettingsInNonVolatileMemory();
         };
 
-        if (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2] == 3) {
+        if (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2] == 3)
+        {
 
           // Restore default settings and clear Wi-Fi credentials
 
@@ -1701,8 +1902,9 @@ void showSettings() {
 
         // return without saving any changes
         showTheSettingsWindow = false;
-
-      } else {
+      }
+      else
+      {
 
         // Change setting
         aButtonHasBeenPushed = true;
@@ -1716,7 +1918,8 @@ void showSettings() {
       };
     };
 
-    if (aButtonHasBeenPushed) {
+    if (aButtonHasBeenPushed)
+    {
 
       // update the display to reflect the change resulting from a button being pushed
 
@@ -1728,67 +1931,76 @@ void showSettings() {
       sprite.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
       sprite.drawString("Settings:", 0, 0, 2);
 
-      for (int32_t i = 0; i < numberOfSettingsShownOnSettingScreen; i++) {
+      for (int32_t i = 0; i < numberOfSettingsShownOnSettingScreen; i++)
+      {
 
-        if (i == currentSettingIndex) {
+        if (i == currentSettingIndex)
+        {
 
           sprite.setTextColor(TFT_WHITE, TFT_BLACK);
           sprite.drawString(String("*"), 0, (i + 1) * spacingBetweenLines, 2);
           sprite.drawString(selection[i][selectectionsChosenOption[i]], 15, (i + 1) * spacingBetweenLines, 2);
-
-        } else {
+        }
+        else
+        {
 
           sprite.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
           sprite.drawString(selection[i][selectectionsChosenOption[i]], 15, (i + 1) * spacingBetweenLines, 2);
         }
       };
 
-      if (currentSettingIndex == numberOfSettingsShownOnSettingScreen - 1) {
+      if (currentSettingIndex == numberOfSettingsShownOnSettingScreen - 1)
+      {
 
         sprite.setTextDatum(TR_DATUM);
         sprite.drawString("Return to top ->", TFT_Width, 11, 1);
 
         sprite.setTextDatum(BR_DATUM);
         String abbreviatedExitOption = "";
-        switch (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2]) {
-          case 0:
-            {
-              sprite.setTextColor(TFT_GREEN, TFT_BLACK);
-              abbreviatedExitOption = "Save and exit ->";
-              break;
-            }
-          case 1:
-            {
-              sprite.setTextColor(TFT_YELLOW, TFT_BLACK);
-              abbreviatedExitOption = "Discard changes and exit ->";
-              break;
-            }
-          case 2:
-            {
-              sprite.setTextColor(TFT_YELLOW, TFT_BLACK);
-              abbreviatedExitOption = "Reset default settings and exit ->";
-              break;
-            };
-          case 3:
-            {
-              sprite.setTextColor(TFT_RED, TFT_BLACK);
-              abbreviatedExitOption = "Full reset and restart ->";
-              break;
-            };
+        switch (selectectionsChosenOption[numberOfSettingsShownOnSettingScreen - 2])
+        {
+        case 0:
+        {
+          sprite.setTextColor(TFT_GREEN, TFT_BLACK);
+          abbreviatedExitOption = "Save and exit ->";
+          break;
+        }
+        case 1:
+        {
+          sprite.setTextColor(TFT_YELLOW, TFT_BLACK);
+          abbreviatedExitOption = "Discard changes and exit ->";
+          break;
+        }
+        case 2:
+        {
+          sprite.setTextColor(TFT_YELLOW, TFT_BLACK);
+          abbreviatedExitOption = "Reset default settings and exit ->";
+          break;
+        };
+        case 3:
+        {
+          sprite.setTextColor(TFT_RED, TFT_BLACK);
+          abbreviatedExitOption = "Full reset and restart ->";
+          break;
+        };
         };
 
         sprite.drawString(abbreviatedExitOption, TFT_Width, TFT_Height - 12, 1);
-
-      } else {
+      }
+      else
+      {
 
         sprite.setTextDatum(TR_DATUM);
         sprite.drawString("Next ->", TFT_Width, 11, 1);
 
         sprite.setTextDatum(BR_DATUM);
 
-        if (currentSettingIndex == numberOfSettingsShownOnSettingScreen - 2) {
+        if (currentSettingIndex == numberOfSettingsShownOnSettingScreen - 2)
+        {
           sprite.drawString("Change ->", TFT_Width, TFT_Height - 12, 1);
-        } else {
+        }
+        else
+        {
           sprite.drawString("Change setting ->", TFT_Width, TFT_Height - 12, 1);
         };
       };
@@ -1807,9 +2019,11 @@ void showSettings() {
   FullyRefreshTheClock();
 };
 
-void showAbout() {
+void showAbout()
+{
 
-  if (!IsTheBottomButtonPressed()) return;
+  if (!IsTheBottomButtonPressed())
+    return;
 
   if (debugIsOn)
     Serial.println("Displaying the About window");
@@ -1825,9 +2039,9 @@ void showAbout() {
 
   sprite.setTextDatum(TL_DATUM);
   sprite.drawString("Nixie Clock", 202, 38, 2);
-  sprite.drawString("v2", 273, 44, 1);
+  sprite.drawString("v3", 273, 44, 1);
   sprite.drawString("Copyright", 202, 54, 2);
-  sprite.drawString("Rob Latour, 2023", 202, 70, 2);
+  sprite.drawString("Rob Latour, 2025", 202, 70, 2);
   sprite.drawString("rlatour.com", 202, 86, 2);
 
   sprite.setTextDatum(BR_DATUM);
@@ -1846,7 +2060,8 @@ void showAbout() {
   FullyRefreshTheClock();
 }
 
-void setup() {
+void setup()
+{
 
   SetupSerialMonitor();
   SetupButtons();
@@ -1857,7 +2072,8 @@ void setup() {
   setupComplete = true;
 };
 
-void loop() {
+void loop()
+{
 
   showAbout();
   showSettings();
